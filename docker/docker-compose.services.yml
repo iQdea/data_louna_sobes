@@ -1,0 +1,36 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    environment:
+      - POSTGRES_DB
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - PGDATA
+      - LANG
+      - LC_CTYPE
+      - LC_COLLATE
+    ports:
+      - '5432:5432'
+    command: ["postgres", "-c", "jit=off"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis
+    container_name: redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - '6379:6379'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  redis_data:
+  pg_data:
