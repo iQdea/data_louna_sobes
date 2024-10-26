@@ -1,5 +1,5 @@
 import { Exclude, Expose } from "class-transformer";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, OmitType } from "@nestjs/swagger";
 
 @Exclude()
 export class Item {
@@ -45,25 +45,31 @@ export class ItemRemote {
   suggested_price!: number
 }
 
-
 @Exclude()
-export class ItemResponse {
-  @Expose()
-  @ApiProperty()
-  id!: string
-
+export class ItemBase {
   @Expose()
   @ApiProperty()
   name!: string
 
   @Expose()
   @ApiProperty()
-  min_tradable!: number
+  min_tradable!: number | null
 
   @Expose()
   @ApiProperty()
-  min_non_tradable!: number
+  min_non_tradable!: number | null
 }
+
+
+
+@Exclude()
+export class ItemResponse extends ItemBase {
+  @Expose()
+  @ApiProperty()
+  id!: string
+}
+
+export type ItemsArrayResponse = Omit<ItemResponse, "id">[]
 
 @Exclude()
 export class ItemResponsePurchase {

@@ -1,11 +1,11 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service";
-import { ItemNonTradable, ItemRemote, ItemResponse, ItemTradable, QueryGeneric } from "../../common/dto";
+import { ItemBase, ItemNonTradable, ItemRemote, ItemResponse, ItemTradable, QueryGeneric } from "../../common/dto";
 import { createHash } from "crypto";
 import { CACHE_MANAGER } from "@nestjs/cache-manager";
 import { Cache } from "cache-manager";
 import { Sql } from "postgres";
-import { gzip, gunzip } from 'node:zlib';
+import { gunzip, gzip } from "node:zlib";
 
 @Injectable()
 export class ItemsService {
@@ -29,6 +29,64 @@ export class ItemsService {
       this.insertTradableItems(sql, tradableItems, batchSize),
       this.updateNonTradableItems(sql, nonTradableItems, batchSize)
     ]);
+  }
+
+  async parseApi(filter?: QueryGeneric): Promise<ItemBase[]>{
+    const cacheKey = `items_all`;
+    const cachedData: any = await this.cacheManager.get(cacheKey);
+
+    if (cachedData) {
+      await this.logger.log('Get cached all');
+      const decompressedData = await this.decompressData(Buffer.from(cachedData, 'base64'));
+      if (filter) {
+        const startIndex: number = (filter.page - 1) * filter.pageSize;
+        const endIndex = startIndex + Number(filter.pageSize);
+        console.log(startIndex, endIndex)
+        return decompressedData.slice(startIndex, endIndex) as ItemBase[];
+      } else {
+        return decompressedData as ItemBase[];
+      }
+    }
+
+    const [tradableItems, nonTradableItems]: [ItemTradable[], ItemNonTradable[]] = await Promise.all([
+      this.parseItems<ItemTradable[]>(true),
+      this.parseItems<ItemNonTradable[]>()
+    ]);
+
+    const items: ItemBase[] = tradableItems.map((item) => ({
+      name: item.name,
+      min_tradable: item.min_tradable,
+      min_non_tradable: 0
+    }))
+
+    nonTradableItems.map((item) => {
+      const existingItem = items.find((i) => i.name === item.name);
+      if (existingItem) {
+        existingItem.min_non_tradable = item.min_non_tradable;
+      } else {
+        items.push({
+          name: item.name,
+          min_tradable: 0,
+          min_non_tradable: item.min_non_tradable
+        })
+      }
+    })
+
+    const returningItems = items.map((x) => (x.min_tradable === 0
+      ? { ...x, min_tradable: null } :
+      (x.min_non_tradable === 0 ? { ...x, min_non_tradable: null } : x)));
+
+    const compressedData = await this.compressData(returningItems);
+    await this.cacheManager.set(cacheKey, compressedData.toString('base64'), 300e3);
+    await this.logger.log('Cached all');
+
+    if (filter) {
+      const startIndex: number = (filter.page - 1) * filter.pageSize;
+      const endIndex = startIndex + Number(filter.pageSize);
+      return returningItems.slice(startIndex, endIndex);
+    } else {
+      return returningItems;
+    }
   }
 
   async insertTradableItems(sql: Sql, items: ItemTradable[], batchSize: number) {

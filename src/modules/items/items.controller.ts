@@ -1,9 +1,9 @@
 import { Controller, Query } from "@nestjs/common";
-import { ApiTags } from "@nestjs/swagger";
+import { ApiTags, OmitType } from "@nestjs/swagger";
 import { ItemsService } from "./items.service";
-import { CollectionResponse, EmptyEndpointResponse, Endpoint } from "@qdea/swagger-serializer";
+import { CollectionResponse, EmptyEndpointResponse, Endpoint, EndpointResponse } from "@qdea/swagger-serializer";
 import { JwtGuard } from "../auth/jwt/jwt.guard";
-import { ItemResponse, QueryGeneric } from "../../common/dto";
+import { ItemBase, ItemResponse, ItemsArrayResponse, QueryGeneric } from "../../common/dto";
 
 @ApiTags('Items')
 @Controller('items')
@@ -11,6 +11,26 @@ export class ItemsController {
   constructor(
     private readonly itemsService: ItemsService
   ) {}
+
+  @Endpoint('get', {
+    path: 'pagination/db',
+    protect: {
+      enabled: true,
+      guards: [JwtGuard],
+      security: {
+        name: 'access'
+      }
+    },
+    summary: 'Отобразить массив объектов с двумя минимальными ценами на предмет с пагинацией с бд',
+    response: ItemResponse
+  })
+  async getItems(@Query() filter: QueryGeneric): CollectionResponse<ItemResponse> {
+    const items = await this.itemsService.getItems(filter)
+    return {
+      dto: ItemResponse,
+      data: items
+    };
+  }
 
   @Endpoint('get', {
     protect: {
@@ -21,12 +41,32 @@ export class ItemsController {
       }
     },
     summary: 'Отобразить массив объектов с двумя минимальными ценами на предмет',
-    response: ItemResponse
+    response: ItemBase
   })
-  async getItems(@Query() filter: QueryGeneric): CollectionResponse<ItemResponse> {
-    const items = await this.itemsService.getItems(filter)
+  async getParsed(): CollectionResponse<ItemBase> {
+    const items = await this.itemsService.parseApi()
     return {
-      dto: ItemResponse,
+      dto: ItemBase,
+      data: items
+    };
+  }
+
+  @Endpoint('get', {
+    path: 'pagination/array',
+    protect: {
+      enabled: true,
+      guards: [JwtGuard],
+      security: {
+        name: 'access'
+      }
+    },
+    summary: 'Отобразить массив объектов с двумя минимальными ценами на предмет с пагинацией без бд',
+    response: ItemBase
+  })
+  async getParsedPaginated(@Query() filter: QueryGeneric): CollectionResponse<ItemBase> {
+    const items = await this.itemsService.parseApi(filter)
+    return {
+      dto: ItemBase,
       data: items
     };
   }
