@@ -10,11 +10,17 @@ export class Item {
   @Expose()
   @ApiProperty()
   quantity!: number
+}
 
+@Exclude()
+export class ItemTradable extends Item {
   @Expose()
   @ApiProperty()
   min_tradable!: number
+}
 
+@Exclude()
+export class ItemNonTradable extends Item {
   @Expose()
   @ApiProperty()
   min_non_tradable!: number

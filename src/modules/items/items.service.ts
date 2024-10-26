@@ -1,9 +1,11 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service";
-import { Item, ItemRemote, ItemResponse, QueryGeneric } from "../../common/dto";
+import { ItemNonTradable, ItemRemote, ItemResponse, ItemTradable, QueryGeneric } from "../../common/dto";
 import { createHash } from "crypto";
 import { CACHE_MANAGER } from "@nestjs/cache-manager";
 import { Cache } from "cache-manager";
+import { Sql } from "postgres";
+import { gzip, gunzip } from 'node:zlib';
 
 @Injectable()
 export class ItemsService {
@@ -15,31 +17,71 @@ export class ItemsService {
   }
 
   async initItems() {
-    const res = await fetch('https://api.skinport.com/v1/items?app_id=730')
-    if (res.status === 200) {
-      const itemsRemote: ItemRemote[] = await res.json()
-      const items: Item[]
-        = itemsRemote.map((x) => (
-          {
-            name: x.market_hash_name,
-            quantity: x.quantity,
-            min_tradable: x.min_price,
-            min_non_tradable: x.suggested_price
-          }));
-      const sql = await this.dataBaseService.query();
-      await this.clearCache()
-      const batchSize = 1000;
-      for (let i = 0; i < items.length; i += batchSize) {
-        const batch = items.slice(i, i + batchSize);
-        await sql`INSERT INTO items ${ sql(batch) } ON CONFLICT (name) DO UPDATE SET 
-                            quantity = items.quantity,
-                            min_tradable = items.min_tradable,
-                            min_non_tradable = items.min_non_tradable`
-      }
-    } else {
-      this.logger.error(res)
-      throw new Error('Something went wrong with external api')
+    const [tradableItems, nonTradableItems]: [ItemTradable[], ItemNonTradable[]] = await Promise.all([
+      this.parseItems<ItemTradable[]>(true),
+      this.parseItems<ItemNonTradable[]>()
+    ]);
+
+    const sql = await this.dataBaseService.query();
+
+    const batchSize = 1000;
+    await Promise.all([
+      this.insertTradableItems(sql, tradableItems, batchSize),
+      this.updateNonTradableItems(sql, nonTradableItems, batchSize)
+    ]);
+  }
+
+  async insertTradableItems(sql: Sql, items: ItemTradable[], batchSize: number) {
+    const batches = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      batches.push(sql`INSERT INTO items ${sql(batch)} ON CONFLICT (name) DO UPDATE SET
+            quantity = items.quantity,
+            min_tradable = items.min_tradable`);
     }
+    await Promise.all(batches);
+  }
+
+  async updateNonTradableItems(sql: Sql, items: ItemNonTradable[], batchSize: number) {
+    const batches = [];
+    for (let j = 0; j < items.length; j += batchSize) {
+      const batch = items.slice(j, j + batchSize).map((x) => [x.name, x.quantity, x.min_non_tradable]);
+      batches.push(sql`UPDATE items SET min_non_tradable = t.min_price::float
+            FROM (VALUES ${sql(batch)}) AS t(name, quantity, min_price)
+            WHERE items.name = t.name::text`);
+    }
+    await Promise.all(batches);
+  }
+
+  async parseItems<T>(tradable: boolean = false): Promise<T> {
+    const cacheKey = tradable ? `items_tradable` : `items_non_tradable`;
+    const cachedData: any = await this.cacheManager.get(cacheKey);
+
+    if (cachedData) {
+      await this.logger.log('Get cached tradable = ' + tradable);
+      const decompressedData = await this.decompressData(Buffer.from(cachedData, 'base64'));
+      return decompressedData as T;
+    }
+
+    const res = await fetch(`https://api.skinport.com/v1/items?app_id=730&tradable=${tradable}`);
+    if (res.status === 200) {
+      const itemsArray: ItemRemote[] = await res.json();
+      const itemsRemote = itemsArray.map((x) => this.parseFields(tradable, x));
+      const compressedData = await this.compressData(itemsRemote);
+      await this.cacheManager.set(cacheKey, compressedData.toString('base64'), 300e3);
+      await this.logger.log('Cached tradable = ' + tradable);
+      return itemsRemote as T;
+    } else if (res.status === 429) {
+      throw new Error(`Too many requests with external API on tradable = ${tradable} and no cached data`);
+    } else {
+      throw new Error(`Something went wrong with external API on tradable = ${tradable} with code ${res.status}`);
+    }
+  }
+
+
+  parseFields(tradable: boolean, x: ItemRemote) {
+    const base = { name: x.market_hash_name, quantity: x.quantity };
+    return tradable ? { ...base, min_tradable: x.min_price } : { ...base, min_non_tradable: x.min_price };
   }
 
   async getItems(filter: QueryGeneric): Promise<ItemResponse[]> {
@@ -75,5 +117,27 @@ export class ItemsService {
     for (const key of keysDel) {
       await this.cacheManager.del(key)
     }
+  }
+
+  async compressData<T extends any[]>(data: T): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      gzip(JSON.stringify(data), (err, buffer) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(buffer);
+      });
+    });
+  }
+
+  async decompressData<T extends any[]>(data: Buffer): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      gunzip(data, (err, buffer) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(JSON.parse(buffer.toString()) as T);
+      });
+    });
   }
 }

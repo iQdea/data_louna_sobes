@@ -25,17 +25,16 @@ export class PurchaseService {
         const [itemDetails]: ItemResponsePurchase[] = await sql<ItemResponsePurchase[]>`SELECT id, quantity, min_tradable, min_non_tradable 
                                       FROM public.items WHERE id = ${item.id} FOR UPDATE`;
 
-        if (itemDetails.quantity < item.quantity) {
+        if (itemDetails.quantity < item.quantity || !itemDetails.min_tradable) {
           throw new Error(`Недостаточно предметов: ${itemDetails.id}`);
         }
 
-        totalAmount += (itemDetails.min_tradable || itemDetails.min_non_tradable) * item.quantity;
+        totalAmount += itemDetails.min_tradable * item.quantity;
       }
 
       if (userStart.balance < totalAmount) {
         throw new Error('Недостаточно средств на счету.');
       }
-      await new Promise(f => setTimeout(f, 5000));
 
       for (const item of items) {
         await sql`UPDATE public.items SET quantity = quantity - ${item.quantity} WHERE id = ${item.id}`;
@@ -80,10 +79,10 @@ export class PurchaseService {
 
       for (const item of items) {
         const itemDetail = itemMap[item.id];
-        if (!itemDetail || itemDetail.quantity < item.quantity) {
+        if (!itemDetail || itemDetail.quantity < item.quantity || !itemDetail.min_tradable) {
           throw new Error(`Недостаточно предметов: ${item.id}`);
         }
-        totalAmount += (itemDetail.min_tradable || itemDetail.min_non_tradable) * item.quantity;
+        totalAmount += itemDetail.min_tradable * item.quantity;
       }
 
       const [userStart]: UserBalance[] = await sql<UserBalance[]>`SELECT balance 
@@ -92,8 +91,6 @@ export class PurchaseService {
       if (!userStart) {
         throw new Error('Недостаточно средств на счету.');
       }
-
-      await new Promise(f => setTimeout(f, 5000));
 
       const itemsRows = items.map((x) => [x.id, x.quantity])
       const affectedRows = await sql`

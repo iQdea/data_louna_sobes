@@ -53,7 +53,7 @@ export class UserPasswordUpdateRequest {
 @Exclude()
 export class AuthRequest {
   @Expose()
-  @ApiProperty({ default: 'test@ya.ru'})
+  @ApiProperty({ default: '1@ya.ru'})
   @IsEmail()
   email!: string;
 

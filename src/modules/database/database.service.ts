@@ -1,26 +1,18 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { Sql } from "postgres";
-import { getConnection } from "../../config/postgres.config";
 
 @Injectable()
-export class DatabaseService implements OnModuleInit, OnModuleDestroy {
+export class DatabaseService implements OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
-  private sql!: Sql;
 
-  async onModuleInit() {
-    try {
-      this.sql = getConnection();
-      this.logger.log('Connected to database')
-    } catch (e) {
-      this.logger.error(e)
-      throw e;
-    }
+  constructor(
+    @Inject('DATA_SOURCE') private sql: Sql,
+  ) {
   }
 
   async queryUnsafe<T extends any[]>(queryString: string, params: any[]): Promise<T> {
-    const sql = this.sql;
     try {
-      return await sql.unsafe<T>(queryString, params);
+      return await this.sql.unsafe<T>(queryString, params);
     } catch (e) {
       this.logger.error('Database query error:' + e);
       throw e;
